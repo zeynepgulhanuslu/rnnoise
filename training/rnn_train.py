@@ -2,6 +2,8 @@
 
 from __future__ import print_function
 
+import sys
+
 import keras
 from keras.models import Sequential
 from keras.models import Model
@@ -81,8 +83,11 @@ model.compile(loss=[mycost, my_crossentropy],
 
 batch_size = 32
 
+f_name_training_data = 'training.h5'
+if len(sys.argv) >= 2:
+    f_name_training_data = sys.argv[1]
 print('Loading data...')
-with h5py.File('training.h5', 'r') as hf:
+with h5py.File(f_name_training_data, 'r') as hf:
     all_data = hf['data'][:]
 print('done.')
 
@@ -113,4 +118,9 @@ model.fit(x_train, [y_train, vad_train],
           batch_size=batch_size,
           epochs=120,
           validation_split=0.1)
-model.save("weights.hdf5")
+
+f_name_trained_weights = 'weights.hdf5'
+if len(sys.argv) >= 3:
+    f_name_trained_weights = sys.argv[2]
+
+model.save(f_name_trained_weights)
