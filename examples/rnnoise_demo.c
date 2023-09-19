@@ -70,7 +70,6 @@ int write_wav(const char *filename, short *data, int num_samples) {
 
 int main(int argc, char **argv) {
     int i;
-    int first = 1;
     float x[FRAME_SIZE];
     short *input_data;
     int num_samples;
@@ -97,8 +96,8 @@ int main(int argc, char **argv) {
         }
 
         rnnoise_process_frame(st, x, x);
-
-        for (int j = 0; j < frame_samples; j++) {
+        int j = 0;
+        for (j = 0; j < frame_samples; j++) {
             output_data[i + j] = x[j];
         }
     }
