@@ -7,101 +7,135 @@ from keras.layers import Dense
 from keras.layers import LSTM
 from keras.layers import GRU
 from keras.models import load_model
+
+from keras.constraints import Constraint
 from keras import backend as K
+
 import sys
 import re
 import numpy as np
 
-def printVector(f, ft, vector, name):
-    v = np.reshape(vector, (-1));
-    #print('static const float ', name, '[', len(v), '] = \n', file=f)
-    f.write('static const rnn_weight {}[{}] = {{\n   '.format(name, len(v)))
+
+def printVector(f, vector, name):
+    v = np.reshape(vector, (-1))
+    # print('static const float ', name, '[', len(v), '] = \n', file=f)
+    f.write('static const rnn_weight {}[{}] = {{\n  '.format(name, len(v)))
     for i in range(0, len(v)):
-        f.write('{}'.format(min(127, int(round(256*v[i])))))
-        ft.write('{}'.format(min(127, int(round(256*v[i])))))
-        if (i!=len(v)-1):
+        f.write('{}'.format(min(127, int(round(256 * v[i])))))
+        if (i != len(v) - 1):
             f.write(',')
         else:
             break;
-        ft.write(" ")
-        if (i%8==7):
-            f.write("\n   ")
+        if (i % 8 == 7):
+            f.write("\n  ")
         else:
             f.write(" ")
-    #print(v, file=f)
+    # print(v, file=f)
     f.write('\n};\n\n')
-    ft.write("\n")
-    return;
+    return
 
-def printLayer(f, ft, layer):
+
+def printLayer(f, hf, struct_rnnmodel_buf, layer):
     weights = layer.get_weights()
+    printVector(f, weights[0], layer.name + '_weights')
+    if len(weights) > 2:
+        printVector(f, weights[1], layer.name + '_recurrent_weights')
+    printVector(f, weights[-1], layer.name + '_bias')
+    name = layer.name
     activation = re.search('function (.*) at', str(layer.activation)).group(1).upper()
     if len(weights) > 2:
-        ft.write('{} {} '.format(weights[0].shape[0], weights[0].shape[1]/3))
+        f.write('const GRULayer {} = {{\n  {}_bias,\n  {}_weights,\n  {}_recurrent_weights,\n  '
+                '{}, {}, ACTIVATION_{}\n}};\n\n'
+                .format(name, name, name, name, weights[0].shape[0], int(weights[0].shape[1] / 3), activation))
+
+        struct_rnnmodel_buf.append('  {},\n'.format(int(weights[0].shape[1] / 3)))
+        struct_rnnmodel_buf.append('  &{},\n\n'.format(name))
+
+        hf.write('  int {}_size;\n'.format(name))
+        hf.write('  const GRULayer *{};\n\n'.format(name))
     else:
-        ft.write('{} {} '.format(weights[0].shape[0], weights[0].shape[1]))
-    if activation == 'SIGMOID':
-        ft.write('1\n')
-    elif activation == 'RELU':
-        ft.write('2\n')
-    else:
-        ft.write('0\n')
-    printVector(f, ft, weights[0], layer.name + '_weights')
-    if len(weights) > 2:
-        printVector(f, ft, weights[1], layer.name + '_recurrent_weights')
-    printVector(f, ft, weights[-1], layer.name + '_bias')
-    name = layer.name
-    if len(weights) > 2:
-        f.write('static const GRULayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}_recurrent_weights,\n   {}, {}, ACTIVATION_{}\n}};\n\n'
-                .format(name, name, name, name, weights[0].shape[0], weights[0].shape[1]/3, activation))
-    else:
-        f.write('static const DenseLayer {} = {{\n   {}_bias,\n   {}_weights,\n   {}, {}, ACTIVATION_{}\n}};\n\n'
+        f.write('const DenseLayer {} = {{\n  {}_bias,\n  {}_weights,\n  {}, {}, ACTIVATION_{}\n}};\n\n'
                 .format(name, name, name, weights[0].shape[0], weights[0].shape[1], activation))
 
-def structLayer(f, layer):
-    weights = layer.get_weights()
-    name = layer.name
-    if len(weights) > 2:
-        f.write('    {},\n'.format(weights[0].shape[1]/3))
-    else:
-        f.write('    {},\n'.format(weights[0].shape[1]))
-    f.write('    &{},\n'.format(name))
+        struct_rnnmodel_buf.append('  {},\n'.format(weights[0].shape[1]))
+        struct_rnnmodel_buf.append('  &{},\n\n'.format(name))
 
+        hf.write('  int {}_size;\n'.format(name))
+        hf.write('  const DenseLayer *{};\n\n'.format(name))
 
-def foo(c, name):
-    return None
 
 def mean_squared_sqrt_error(y_true, y_pred):
     return K.mean(K.square(K.sqrt(y_pred) - K.sqrt(y_true)), axis=-1)
 
 
-model = load_model(sys.argv[1], custom_objects={'msse': mean_squared_sqrt_error, 'mean_squared_sqrt_error': mean_squared_sqrt_error, 'my_crossentropy': mean_squared_sqrt_error, 'mycost': mean_squared_sqrt_error, 'WeightClip': foo})
+def my_crossentropy(y_true, y_pred):
+    return K.mean(2 * K.abs(y_true - 0.5) * K.binary_crossentropy(y_pred, y_true), axis=-1)
+
+
+def mymask(y_true):
+    return K.minimum(y_true + 1., 1.)
+
+
+def msse(y_true, y_pred):
+    return K.mean(mymask(y_true) * K.square(K.sqrt(y_pred) - K.sqrt(y_true)), axis=-1)
+
+
+def mycost(y_true, y_pred):
+    return K.mean(mymask(y_true) * (10 * K.square(K.square(K.sqrt(y_pred) - K.sqrt(y_true))) +
+                                    K.square(K.sqrt(y_pred) - K.sqrt(y_true)) +
+                                    0.01 * K.binary_crossentropy(y_pred, y_true)), axis=-1)
+
+
+def my_accuracy(y_true, y_pred):
+    return K.mean(2 * K.abs(y_true - 0.5) * K.equal(y_true, K.round(y_pred)), axis=-1)
+
+
+class WeightClip(Constraint):
+    def __init__(self, c=2, name='WeightClip'):
+        self.c = c
+
+    def __call__(self, p):
+        return K.clip(p, -self.c, self.c)
+
+    def get_config(self):
+        return {'name': self.__class__.__name__, 'c': self.c}
+
+
+model = load_model(sys.argv[1], custom_objects={'msse': msse,
+                                                'mean_squared_sqrt_error': mean_squared_sqrt_error,
+                                                'my_crossentropy': my_crossentropy,
+                                                'mycost': mycost, 'WeightClip': WeightClip})
 
 weights = model.get_weights()
 
 f = open(sys.argv[2], 'w')
-ft = open(sys.argv[3], 'w')
+hf = open(sys.argv[3], 'w')
 
 f.write('/*This file is automatically generated from a Keras model*/\n\n')
 f.write('#ifdef HAVE_CONFIG_H\n#include "config.h"\n#endif\n\n#include "rnn.h"\n#include "rnn_data.h"\n\n')
-ft.write('rnnoise-nu model file version 1\n')
 
+hf.write('/*This file is automatically generated from a Keras model*/\n\n')
+hf.write('#ifndef RNN_DATA_H\n#define RNN_DATA_H\n\n#include "rnn.h"\n\n')
+
+hf.write('struct RNNModel {\n')
 layer_list = []
+struct_rnnmodel_buf = ['const struct RNNModel rnnoise_model_orig = {\n']
 for i, layer in enumerate(model.layers):
     if len(layer.get_weights()) > 0:
-        printLayer(f, ft, layer)
+        printLayer(f, hf, struct_rnnmodel_buf, layer)
     if len(layer.get_weights()) > 2:
         layer_list.append(layer.name)
+struct_rnnmodel_buf[-1] = struct_rnnmodel_buf[-1].replace(',\n', '')
+struct_rnnmodel_buf.append('};\n')
+f.writelines(struct_rnnmodel_buf)
+hf.write('};\n\n')
 
-f.write('const struct RNNModel rnnoise_model_{} = {{\n'.format(sys.argv[4]))
-for i, layer in enumerate(model.layers):
-    if len(layer.get_weights()) > 0:
-        structLayer(f, layer)
-f.write('};\n')
+hf.write('struct RNNState {\n  const RNNModel *model;\n')
+for i, name in enumerate(layer_list):
+    hf.write('  float *{}_state;\n'.format(name))
+hf.write('};\n\n')
 
-#hf.write('struct RNNState {\n')
-#for i, name in enumerate(layer_list):
-#    hf.write('  float {}_state[{}_SIZE];\n'.format(name, name.upper())) 
-#hf.write('};\n')
+hf.write('\n#endif\n')
 
 f.close()
+hf.close()
