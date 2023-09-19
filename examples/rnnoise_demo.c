@@ -90,15 +90,15 @@ int main(int argc, char **argv) {
 
     for (i = 0; i < num_samples; i += FRAME_SIZE) {
         int frame_samples = (i + FRAME_SIZE <= num_samples) ? FRAME_SIZE : (num_samples - i);
-
-        for (int j = 0; j < frame_samples; j++) {
+        int j = 0;
+        for (j = 0; j < frame_samples; j++) {
             x[j] = input_data[i + j];
         }
 
         rnnoise_process_frame(st, x, x);
-        int j = 0;
-        for (j = 0; j < frame_samples; j++) {
-            output_data[i + j] = x[j];
+        int k = 0;
+        for (k = 0; k < frame_samples; k++) {
+            output_data[i + k] = x[k];
         }
     }
 
